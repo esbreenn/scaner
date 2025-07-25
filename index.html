@@ -2,13 +2,18 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Escanear Código de Barras</title>
-  <script src="https://unpkg.com/html5-qrcode"></script>
+  <title>POS - Escaneo y Carrito</title>
+  <script src="https://unpkg.com/quagga@0.12.1/dist/quagga.min.js"></script>
+  <style>
+    #video { width: 300px; border: 1px solid #444;}
+    #result { margin-top: 20px; font-size: 1.2em;}
+  </style>
 </head>
 <body>
-  <h2>Escanear código de barras</h2>
-  <div id="reader" style="width:300px"></div>
+  <h2>POS: Escanear y agregar al carrito</h2>
+  <div id="video"></div>
   <div id="result"></div>
+  <button onclick="reanudarEscaneo()">Escanear otro producto</button>
   <script>
     // Stock de prueba
     const productos = [
@@ -18,32 +23,56 @@
       { codigo: "7796543210987", nombre: "Azúcar Ledesma", precio: 900 }
     ];
 
+    let carrito = [];
+
     function buscarProducto(codigo) {
       return productos.find(p => p.codigo === codigo);
     }
 
-    function mostrarResultado(codigo) {
-      const producto = buscarProducto(codigo);
-      const resultDiv = document.getElementById('result');
-      if (producto) {
-        resultDiv.innerHTML = `<b>Producto:</b> ${producto.nombre}<br><b>Precio:</b> $${producto.precio}`;
-      } else {
-        resultDiv.innerHTML = `Código ${codigo} no encontrado.`;
-      }
+    function mostrarCarrito() {
+      let html = "<h3>Carrito:</h3><ul>";
+      carrito.forEach((prod, idx) => {
+        html += `<li>${prod.nombre} - $${prod.precio}</li>`;
+      });
+      html += "</ul>";
+      document.getElementById('result').innerHTML = html;
     }
 
-    // Inicializar escáner
-    const html5QrCode = new Html5Qrcode("reader");
-    html5QrCode.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: 250 },
-      (decodedText, decodedResult) => {
-        mostrarResultado(decodedText);
-        html5QrCode.stop();
+    Quagga.init({
+      inputStream: {
+        type : "LiveStream",
+        target: document.querySelector('#video'),
+        constraints: {
+          facingMode: "environment"
+        }
+      },
+      decoder: {
+        readers: ["ean_reader"] // Cambiar/Agregar más si querés otros códigos
       }
-    ).catch(err => {
-      document.getElementById('result').innerText = "Error al iniciar cámara: " + err;
+    }, function(err) {
+      if (err) {
+        document.getElementById('result').innerText = "Error: " + err;
+        return;
+      }
+      Quagga.start();
     });
+
+    Quagga.onDetected(function(data){
+      const codigo = data.codeResult.code;
+      const producto = buscarProducto(codigo);
+      if (producto) {
+        carrito.push(producto);
+        mostrarCarrito();
+      } else {
+        document.getElementById('result').innerHTML = `Código ${codigo} no encontrado.`;
+      }
+      Quagga.stop();
+    });
+
+    function reanudarEscaneo() {
+      Quagga.start();
+      document.getElementById('result').innerHTML = "Escaneando...";
+    }
   </script>
 </body>
 </html>
