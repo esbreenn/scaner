@@ -1,7 +1,6 @@
 // firebase.js
-// 1) Asume que ya cargaste firebase-app-compat.js y firebase-firestore-compat.js en tu HTML.
+// (cárgalo con un <script src="./firebase.js"> después de los SDKs UMD)
 
-// 2) Tu configuración:
 const firebaseConfig = {
   apiKey:             "AIzaSyBtbiJpjiVsfhUVmnF23huJLyYOw5tikB0",
   authDomain:         "scanner-prueba-f3ae0.firebaseapp.com",
@@ -11,9 +10,9 @@ const firebaseConfig = {
   appId:              "1:578819836928:web:f496190221317d372fdce5"
 };
 
-// 3) Inicializa Firebase + Firestore
+// Inicializa Firebase y Firestore (compat)
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// 4) Lo pegamos al `window` para usarlo desde cualquier script
+// Exponemos db en window
 window.db = db;

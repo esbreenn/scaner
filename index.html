@@ -1,137 +1,124 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8"/>
+  <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Scanner EAN-13 con ZXing & Firebase</title>
+  <title>Scanner EAN-13 con Html5Qrcode & Firebase</title>
   <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
   <h2>Escáner de Código de Barras (EAN-13)</h2>
 
-  <div id="scanner-container">
-    <video id="video" playsinline muted></video>
-  </div>
+  <!-- Contenedor del QR/barcode scanner -->
+  <div id="scanner" style="width:300px; margin: auto;"></div>
 
+  <!-- Resultado / controles de stock -->
   <div id="result"></div>
 
+  <!-- Formulario para nuevos productos -->
   <div id="form-container">
     <h3>Agregar producto</h3>
-    <form id="add-product-form">
-      <input type="text"   id="product-name"  placeholder="Nombre del producto" required /><br/><br/>
-      <input type="number" id="product-price" placeholder="Precio"          required /><br/><br/>
-      <input type="number" id="product-stock" placeholder="Stock inicial"   required /><br/><br/>
-      <button type="submit">Guardar producto</button>
+    <form id="add-form">
+      <input id="name"  type="text"   placeholder="Nombre del producto" required/><br/><br/>
+      <input id="price" type="number" placeholder="Precio"          required/><br/><br/>
+      <input id="stock" type="number" placeholder="Stock inicial"   required/><br/><br/>
+      <button>Guardar</button>
     </form>
   </div>
 
-  <!-- 1) Firebase UMD bundles -->
+  <!-- Firebase UMD -->
   <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-firestore-compat.js"></script>
-  <!-- 2) Tu firebase.js sin imports -->
   <script src="./firebase.js"></script>
 
-  <!-- 3) ZXing UMD bundle -->
-  <script src="https://unpkg.com/@zxing/library@0.19.2/umd/index.min.js"></script>
+  <!-- Html5Qrcode UMD -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.7/minified/html5-qrcode.min.js"></script>
 
-  <!-- 4) Lógica principal -->
   <script>
-    let ultimoCodigo = null;
+    const scannerDiv = document.getElementById('scanner');
+    const resultDiv  = document.getElementById('result');
+    const formDiv    = document.getElementById('form-container');
+    const addForm    = document.getElementById('add-form');
+    let ultimoCode = null;
 
-    // --- CRUD en Firestore: usa window.db que expone firebase.js ---
-    async function fetchProducto(code) {
+    // Funciones Firestore
+    async function fetchProduct(code) {
       const snap = await window.db.collection('productos').doc(code).get();
       return snap.exists ? snap.data() : null;
     }
-    async function saveProducto(code, prod) {
-      await window.db.collection('productos').doc(code).set(prod);
+    async function saveProduct(code, data) {
+      await window.db.collection('productos').doc(code).set(data);
     }
-    async function deleteProducto(code) {
+    async function deleteProduct(code) {
       await window.db.collection('productos').doc(code).delete();
     }
 
-    // --- UI ---
-    function mostrarProducto(code, prod) {
-      const resultDiv = document.getElementById('result');
-      const formCont  = document.getElementById('form-container');
+    function showProduct(code, prod) {
       if (!prod) {
-        resultDiv.innerHTML = `<strong>Código no encontrado:</strong> ${code}`;
-        formCont.style.display = 'block';
+        resultDiv.innerHTML = `<strong>No existe:</strong> ${code}`;
+        formDiv.style.display = 'block';
         return;
       }
-      formCont.style.display = 'none';
+      formDiv.style.display = 'none';
       resultDiv.innerHTML = `
-        <p><strong>Producto:</strong> ${prod.nombre}</p>
-        <p><strong>Precio:</strong> $${prod.precio}</p>
-        <p><strong>Stock:</strong> ${prod.stock}</p>
-        <button data-action="decrease">−</button>
-        <button data-action="increase">＋</button>
-        <button data-action="delete">Eliminar</button>
+        <p><strong>${prod.nombre}</strong></p>
+        <p>Precio: $${prod.precio} | Stock: ${prod.stock}</p>
+        <button id="inc">＋</button>
+        <button id="dec">−</button>
+        <button id="del">Eliminar</button>
       `;
+      document.getElementById('inc').onclick = async () => {
+        prod.stock++; await saveProduct(code, prod); showProduct(code, prod);
+      };
+      document.getElementById('dec').onclick = async () => {
+        prod.stock = Math.max(0, prod.stock-1);
+        await saveProduct(code, prod); showProduct(code, prod);
+      };
+      document.getElementById('del').onclick = async () => {
+        await deleteProduct(code);
+        ultimoCode = null;
+        resultDiv.innerHTML = '<em>Eliminado.</em>';
+      };
     }
 
-    // --- Configuro ZXing para EAN-13 solamente ---
-    const hints    = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ ZXing.BarcodeFormat.EAN_13 ]);
-    const codeReader = new ZXing.BrowserMultiFormatReader(hints, {
-      timeBetweenDecodingAttempts: 300
+    // Al enviar formulario de nuevo producto
+    addForm.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      if (!ultimoCode) return;
+      const data = {
+        nombre: document.getElementById('name').value.trim(),
+        precio: parseFloat(document.getElementById('price').value),
+        stock:  parseInt(document.getElementById('stock').value, 10)
+      };
+      await saveProduct(ultimoCode, data);
+      showProduct(ultimoCode, data);
+      addForm.reset();
     });
 
-    // --- Arranco la cámara y el escaneo continuo ---
-    codeReader.decodeFromVideoDeviceContinuously(
-      /* deviceId */   null,
-      /* vídeo HTML */ 'video',
-      (result, error) => {
-        if (result) {
-          const code = result.getText();
-          // filtro solo 13 dígitos y evito rebotes
-          if (code.length === 13 && code !== ultimoCodigo) {
-            ultimoCodigo = code;
-            fetchProducto(code).then(prod => mostrarProducto(code, prod));
-          }
-        } else if (error && !(error instanceof ZXing.NotFoundException)) {
-          console.error(error);
-        }
+    // Inicializar Html5QrcodeScanner
+    const html5QrCode = new Html5Qrcode("scanner");
+    const config = {
+      fps: 10,
+      qrbox: { width: 250, height: 100 },
+      formatsToSupport: [ Html5QrcodeSupportedFormats.EAN_13 ]
+    };
+    html5QrCode.start(
+      { facingMode: "environment" },
+      config,
+      async decodedText => {
+        // decodedText es el string EAN-13
+        if (decodedText.length !== 13 || decodedText === ultimoCode) return;
+        ultimoCode = decodedText;
+        const prod = await fetchProduct(decodedText);
+        showProduct(decodedText, prod);
+      },
+      error => {
+        // Ignoramos intentos fallidos
       }
-    );
-
-    // --- Eventos de botones +/–/Eliminar ---
-    document.getElementById('result').addEventListener('click', async e => {
-      if (!ultimoCodigo) return;
-      const action = e.target.dataset.action;
-      if (!action) return;
-      let prod = await fetchProducto(ultimoCodigo);
-      if (!prod) return;
-
-      if (action === 'increase')      prod.stock++;
-      else if (action === 'decrease') prod.stock = Math.max(0, prod.stock - 1);
-      else if (action === 'delete') {
-        await deleteProducto(ultimoCodigo);
-        ultimoCodigo = null;
-        document.getElementById('result').innerHTML = '<em>Producto eliminado.</em>';
-        return;
-      }
-
-      await saveProducto(ultimoCodigo, prod);
-      mostrarProducto(ultimoCodigo, prod);
+    ).catch(err => {
+      console.error("Error al iniciar cámara:", err);
+      resultDiv.innerHTML = `<em>No se pudo iniciar la cámara.</em>`;
     });
-
-    // --- Alta de nuevos productos ---
-    document.getElementById('add-product-form')
-      .addEventListener('submit', async e => {
-        e.preventDefault();
-        if (!ultimoCodigo) return;
-
-        const name  = document.getElementById('product-name').value.trim();
-        const price = parseFloat(document.getElementById('product-price').value);
-        const stock = parseInt(document.getElementById('product-stock').value, 10);
-        if (!name || isNaN(price) || isNaN(stock)) return;
-
-        const nuevo = { nombre: name, precio: price, stock };
-        await saveProducto(ultimoCodigo, nuevo);
-        mostrarProducto(ultimoCodigo, nuevo);
-        e.target.reset();
-      });
   </script>
 </body>
 </html>
