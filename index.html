@@ -1,49 +1,121 @@
 <!DOCTYPE html>
-<html lang="es">
+<html>
 <head>
   <meta charset="UTF-8">
-  <title>Escanear Código de Barras</title>
-  <script src="https://unpkg.com/html5-qrcode"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Escáner EAN-13 con Stock Dinámico</title>
+  <style>
+    #result button { margin: 0 5px; padding: 4px 8px; }
+  </style>
 </head>
 <body>
-  <h2>Escanear código de barras</h2>
-  <div id="reader" style="width:300px"></div>
+  <h2>Escáner de Código de Barras (EAN-13)</h2>
+  <div id="scanner-container"></div>
   <div id="result"></div>
+
+  <!-- Formulario para nuevos productos -->
+  <div id="form-container" style="display:none;">
+    <h3>Agregar producto</h3>
+    <form id="add-product-form">
+      <input type="text"    id="product-name"  placeholder="Nombre del producto" required><br>
+      <input type="number"  id="product-price" placeholder="Precio"          required><br>
+      <input type="number"  id="product-stock" placeholder="Stock inicial"   required><br>
+      <button type="submit">Guardar producto</button>
+    </form>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
   <script>
-    // Stock de prueba
-    const productos = [
-      { codigo: "7799876543210", nombre: "Arroz Gallo", precio: 1200 },
-      { codigo: "7798765432109", nombre: "Fideos Lucchetti", precio: 950 },
-      { codigo: "7797654321098", nombre: "Aceite Natura", precio: 3500 },
-      { codigo: "7796543210987", nombre: "Azúcar Ledesma", precio: 900 }
-    ];
+    // (1) Ejemplo reducido de stock
+    const listado = {
+      "4006381333931": { nombre: "Café Nescafé", precio: 1200, stock: 5 },
+      "5011417933000": { nombre: "Aceite de Oliva", precio: 3500, stock: 3 },
+      // …otros…
+    };
 
-    function buscarProducto(codigo) {
-      return productos.find(p => p.codigo === codigo);
+    let ultimoCodigo = null;
+
+    // (2) Función para mostrar producto o formulario
+    function mostrarProducto(code) {
+      const resultDiv = document.getElementById("result");
+      const formCont  = document.getElementById("form-container");
+
+      if (!listado[code]) {
+        resultDiv.innerHTML = `<strong>Código no encontrado:</strong> ${code}`;
+        formCont.style.display = "block";
+        return;
+      }
+
+      formCont.style.display = "none";
+      const p = listado[code];
+      resultDiv.innerHTML = `
+        <p><strong>Producto:</strong> ${p.nombre}</p>
+        <p><strong>Precio:</strong> $${p.precio}</p>
+        <p><strong>Stock:</strong> ${p.stock}</p>
+        <button data-action="decrease">−</button>
+        <button data-action="increase">＋</button>
+        <button data-action="delete">Eliminar</button>
+      `;
     }
 
-    function mostrarResultado(codigo) {
-      const producto = buscarProducto(codigo);
-      const resultDiv = document.getElementById('result');
-      if (producto) {
-        resultDiv.innerHTML = `<b>Producto:</b> ${producto.nombre}<br><b>Precio:</b> $${producto.precio}`;
-      } else {
-        resultDiv.innerHTML = `Código ${codigo} no encontrado.`;
-      }
-    }
+    // (3) Eventos de los botones de stock / eliminar
+    document.getElementById("result").addEventListener("click", e => {
+      if (!ultimoCodigo) return;
+      const action = e.target.getAttribute("data-action");
+      const prod   = listado[ultimoCodigo];
+      if (!action || !prod) return;
 
-    // Inicializar escáner
-    const html5QrCode = new Html5Qrcode("reader");
-    html5QrCode.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: 250 },
-      (decodedText, decodedResult) => {
-        mostrarResultado(decodedText);
-        html5QrCode.stop();
+      if (action === "increase")      prod.stock++;
+      else if (action === "decrease" && prod.stock > 0) prod.stock--;
+      else if (action === "delete") {
+        delete listado[ultimoCodigo];
+        ultimoCodigo = null;
+        document.getElementById("result").innerHTML = `<em>Producto eliminado.</em>`;
+        return;
       }
-    ).catch(err => {
-      document.getElementById('result').innerText = "Error al iniciar cámara: " + err;
+
+      mostrarProducto(ultimoCodigo);
     });
+
+    // (4) Formulario para agregar nuevo producto
+    document.getElementById("add-product-form").addEventListener("submit", e => {
+      e.preventDefault();
+      const name  = document.getElementById("product-name").value.trim();
+      const price = parseFloat(document.getElementById("product-price").value);
+      const stock = parseInt(document.getElementById("product-stock").value, 10);
+
+      if (name && !isNaN(price) && !isNaN(stock) && ultimoCodigo) {
+        listado[ultimoCodigo] = { nombre: name, precio: price, stock };
+        mostrarProducto(ultimoCodigo);
+        e.target.reset();
+      }
+    });
+
+    // (5) Inicialización de Quagga
+    function startScanner() {
+      Quagga.init({
+        inputStream: {
+          name: "Live",
+          type: "LiveStream",
+          target: document.querySelector("#scanner-container"),
+          constraints: { facingMode: "environment" }
+        },
+        decoder: { readers: ["ean_reader"] }
+      }, err => {
+        if (err) { console.error(err); return; }
+        Quagga.start();
+      });
+
+      Quagga.onDetected(data => {
+        const code = data.codeResult.code;
+        if (code !== ultimoCodigo) {
+          ultimoCodigo = code;
+          mostrarProducto(code);
+        }
+      });
+    }
+
+    window.addEventListener("load", startScanner);
   </script>
 </body>
 </html>
