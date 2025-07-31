@@ -1,49 +1,51 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>Scanner EAN-13 con Firebase</title>
-  <!-- Enlaza tu CSS -->
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Scanner EAN-13 con ZXing & Firebase</title>
+  <!-- Tu CSS -->
+  <link rel="stylesheet" href="style.css" />
+  <!-- Firebase compat SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-firestore-compat.js"></script>
+  <!-- Inicialización de Firebase -->
+  <script type="module" src="./firebase.js"></script>
 </head>
 <body>
   <h2>Escáner de Código de Barras (EAN-13)</h2>
 
-  <div id="scanner-container"></div>
+  <!-- Contenedor de cámara: video en lugar de Quagga -->
+  <div id="scanner-container">
+    <video id="video" playsinline></video>
+  </div>
+
+  <!-- Aquí se muestra el código o los controles -->
   <div id="result"></div>
 
-  <!-- El formulario ahora se oculta vía CSS -->
+  <!-- Formulario para dar de alta nuevos productos -->
   <div id="form-container">
     <h3>Agregar producto</h3>
     <form id="add-product-form">
-      <input type="text"   id="product-name"  placeholder="Nombre del producto" required><br><br>
-      <input type="number" id="product-price" placeholder="Precio"          required><br><br>
-      <input type="number" id="product-stock" placeholder="Stock inicial"   required><br><br>
+      <input type="text"   id="product-name"  placeholder="Nombre del producto" required /><br /><br />
+      <input type="number" id="product-price" placeholder="Precio"          required /><br /><br />
+      <input type="number" id="product-stock" placeholder="Stock inicial"   required /><br /><br />
       <button type="submit">Guardar producto</button>
     </form>
   </div>
 
-  <!-- 1) SDKs de compatibilidad para Firebase -->
-  <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-firestore-compat.js"></script>
-
-  <!-- 2) Tu configuración e inicialización en firebase.js -->
-  <script type="module" src="./firebase.js"></script>
-
-  <!-- 3) QuaggaJS para escaneo -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
-
-  <!-- 4) Lógica principal: CRUD + escaneo -->
+  <!-- ZXing + Lógica principal -->
   <script type="module">
-    import { db } from './firebase.js';
+    import { BrowserMultiFormatReader, NotFoundException } from 'https://cdn.jsdelivr.net/npm/@zxing/library@0.19.2/esm/index.js';
+    import { firebase } from './firebase.js';           // si exportas firebase
+    const db = firebase.firestore();                    // compat firestore
 
     let ultimoCodigo = null;
 
-    // Funciones CRUD
+    // ---- Funciones CRUD con Firestore ----
     async function fetchProducto(code) {
-      const doc = await db.collection('productos').doc(code).get();
-      return doc.exists ? doc.data() : null;
+      const snap = await db.collection('productos').doc(code).get();
+      return snap.exists ? snap.data() : null;
     }
 
     async function saveProducto(code, prod) {
@@ -54,15 +56,17 @@
       await db.collection('productos').doc(code).delete();
     }
 
-    // Renderizado de producto o formulario
+    // ---- Renderizado de UI ----
     function mostrarProducto(code, prod) {
       const resultDiv = document.getElementById('result');
       const formCont  = document.getElementById('form-container');
+
       if (!prod) {
         resultDiv.innerHTML = `<strong>Código no encontrado:</strong> ${code}`;
         formCont.style.display = 'block';
         return;
       }
+
       formCont.style.display = 'none';
       resultDiv.innerHTML = `
         <p><strong>Producto:</strong> ${prod.nombre}</p>
@@ -74,68 +78,41 @@
       `;
     }
 
-    // Inicia Quagga
-   Quagga.init({
-  inputStream: {
-    name: "Live",
-    type: "LiveStream",
-    target: document.querySelector('#scanner-container'),
-    constraints: {
-      facingMode: 'environment',
-      // forzar un mínimo de resolución para que los trazos sean nítidos
-      width:  { min: 640, ideal: 1280 },
-      height: { min: 480, ideal: 720 }
-    }
-  },
-  // permite que Quagga “busque” el código en toda la imagen
-  locate: true,
-  locator: {
-    patchSize: 'medium',  // también puedes probar 'large'
-    halfSample: true
-  },
-  decoder: {
-    // incluye varios lectores por si el EAN viene con variaciones
-    readers: [
-      'ean_reader',
-      'ean_8_reader',
-      'upc_reader',
-      'upc_e_reader',
-      'code_128_reader'
-    ]
-  }
-}, err => {
-  if (err) {
-    console.error('Error al inicializar Quagga:', err);
-    return;
-  }
-  Quagga.start();
-});
+    // ---- Inicializar lector ZXing ----
+    const codeReader = new BrowserMultiFormatReader();
+    codeReader
+      .decodeFromVideoDevice(null, 'video', (result, error) => {
+        if (result) {
+          const code = result.getText();
+          if (code === ultimoCodigo) return;  // evita rebotes
+          ultimoCodigo = code;
+          fetchProducto(code).then(prod => mostrarProducto(code, prod));
+        }
+        else if (error && !(error instanceof NotFoundException)) {
+          console.error(error);
+        }
+      })
+      .catch(err => {
+        console.error('Error al arrancar ZXing:', err);
+      });
 
-
-    // Al detectar un código
-    Quagga.onDetected(async ({ codeResult:{ code } }) => {
-      if (code === ultimoCodigo) return;    // evita rebotes
-      ultimoCodigo = code;
-      const prod = await fetchProducto(code);
-      mostrarProducto(code, prod);
-    });
-
-    // Manejo de botones de stock / eliminar
+    // ---- Control de botones (+, −, Eliminar) ----
     document.getElementById('result').addEventListener('click', async e => {
       if (!ultimoCodigo) return;
       const action = e.target.getAttribute('data-action');
       if (!action) return;
+
       let prod = await fetchProducto(ultimoCodigo);
       if (!prod) return;
 
       if (action === 'increase') {
         prod.stock++;
         await saveProducto(ultimoCodigo, prod);
-      } 
+      }
       else if (action === 'decrease' && prod.stock > 0) {
         prod.stock--;
         await saveProducto(ultimoCodigo, prod);
-      } 
+      }
       else if (action === 'delete') {
         await deleteProducto(ultimoCodigo);
         ultimoCodigo = null;
@@ -147,10 +124,11 @@
       mostrarProducto(ultimoCodigo, prod);
     });
 
-    // Manejo del formulario de alta
+    // ---- Alta de nuevos productos ----
     document.getElementById('add-product-form').addEventListener('submit', async e => {
       e.preventDefault();
       if (!ultimoCodigo) return;
+
       const name  = document.getElementById('product-name').value.trim();
       const price = parseFloat(document.getElementById('product-price').value);
       const stock = parseInt(document.getElementById('product-stock').value, 10);
