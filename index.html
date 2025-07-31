@@ -3,126 +3,142 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Escáner EAN-13 con Html5Qrcode & Firebase</title>
-  <link rel="stylesheet" href="style.css"/>
+  <title>Scanner EAN-13 nativo & Firebase</title>
+  <style>
+    body { font-family:sans-serif; text-align:center; padding:1rem; background:#f0f2f5; }
+    #video { width:100%; max-width:360px; border:2px dashed #666; border-radius:8px; }
+    #result, #form { max-width:360px; margin:1rem auto; background:#fff; padding:1rem; border-radius:8px;
+                     box-shadow:0 2px 6px rgba(0,0,0,0.1); text-align:left; }
+    #form { display:none; }
+    input, button { width:100%; padding:0.5rem; margin:0.5rem 0; border-radius:4px; border:1px solid #ccc; }
+    button { background:#007bff; color:#fff; border:none; cursor:pointer; }
+    button:hover { background:#0056b3; }
+  </style>
 </head>
 <body>
-  <h2>Escáner de Código de Barras (EAN-13)</h2>
+  <h2>Escáner EAN-13 nativo & Firebase</h2>
 
-  <!-- Contenedor del scanner -->
-  <div id="scanner" style="width:300px; margin:auto;"></div>
+  <video id="video" autoplay playsinline></video>
 
-  <!-- Aquí mostramos el resultado o los controles de stock -->
   <div id="result"></div>
 
-  <!-- Formulario para dar de alta nuevos productos -->
-  <div id="form-container">
+  <div id="form">
     <h3>Agregar producto</h3>
-    <form id="add-form">
-      <input id="name"  type="text"   placeholder="Nombre del producto" required/><br/><br/>
-      <input id="price" type="number" placeholder="Precio"          required/><br/><br/>
-      <input id="stock" type="number" placeholder="Stock inicial"   required/><br/><br/>
-      <button type="submit">Guardar</button>
-    </form>
+    <input id="name"  type="text"   placeholder="Nombre del producto" required/>
+    <input id="price" type="number" placeholder="Precio"          required/>
+    <input id="stock" type="number" placeholder="Stock inicial"   required/>
+    <button id="save">Guardar</button>
   </div>
 
-  <!-- 1) Firebase UMD bundles -->
+  <!-- Firebase UMD -->
   <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-firestore-compat.js"></script>
-  <!-- 2) Tu firebase.js -->
-  <script src="./firebase.js"></script>
-
-  <!-- 3) Html5Qrcode UMD -->
-  <script src="https://unpkg.com/html5-qrcode@2.3.7/dist/html5-qrcode.min.js"></script>
-
-  <!-- 4) Lógica principal -->
   <script>
-    // instancia del scanner
-    const html5QrCode = new Html5Qrcode("scanner");
-    const config = {
-      fps: 10,
-      qrbox: { width: 250, height: 100 },
-      formatsToSupport: [ Html5QrcodeSupportedFormats.EAN_13 ]
+    // firebase.js inlined
+    const cfg = {
+      apiKey: "AIzaSyBtbiJpjiVsfhUVmnF23huJLyYOw5tikB0",
+      authDomain: "scanner-prueba-f3ae0.firebaseapp.com",
+      projectId: "scanner-prueba-f3ae0",
+      storageBucket: "scanner-prueba-f3ae0.appspot.com",
+      messagingSenderId: "578819836928",
+      appId: "1:578819836928:web:f496190221317d372fdce5"
     };
+    firebase.initializeApp(cfg);
+    window.db = firebase.firestore();
 
-    let ultimoCode = null;
-
-    // — Firestore CRUD (usa window.db que expone firebase.js) —
+    // CRUD
     async function fetchProduct(code) {
-      const snap = await window.db.collection('productos').doc(code).get();
+      const snap = await db.collection('productos').doc(code).get();
       return snap.exists ? snap.data() : null;
     }
     async function saveProduct(code, data) {
-      await window.db.collection('productos').doc(code).set(data);
+      await db.collection('productos').doc(code).set(data);
     }
     async function deleteProduct(code) {
-      await window.db.collection('productos').doc(code).delete();
+      await db.collection('productos').doc(code).delete();
     }
 
-    // — Mostrar producto o formulario —
-    function showProduct(code, prod) {
-      const resultDiv = document.getElementById('result');
-      const formDiv   = document.getElementById('form-container');
+    // UI
+    const video  = document.getElementById('video');
+    const resDiv = document.getElementById('result');
+    const form   = document.getElementById('form');
+    let lastCode = null, currentCode = null;
 
-      if (!prod) {
-        resultDiv.innerHTML = `<strong>No existe:</strong> ${code}`;
-        formDiv.style.display = 'block';
-        return;
+    function showProduct(code, p) {
+      if (!p) {
+        resDiv.innerHTML = `<strong>No existe:</strong> ${code}`;
+        form.style.display = 'block';
+        currentCode = code;
+      } else {
+        form.style.display = 'none';
+        resDiv.innerHTML = `
+          <p><strong>${p.nombre}</strong></p>
+          <p>Precio: $${p.precio} | Stock: ${p.stock}</p>
+          <button id="inc">＋</button>
+          <button id="dec">−</button>
+          <button id="del">Eliminar</button>
+        `;
+        document.getElementById('inc').onclick = async () => {
+          p.stock++; await saveProduct(code,p); showProduct(code,p);
+        };
+        document.getElementById('dec').onclick = async () => {
+          p.stock = Math.max(0,p.stock-1);
+          await saveProduct(code,p); showProduct(code,p);
+        };
+        document.getElementById('del').onclick = async () => {
+          await deleteProduct(code);
+          lastCode = null;
+          resDiv.innerHTML = '<em>Eliminado.</em>';
+        };
       }
-      formDiv.style.display = 'none';
-      resultDiv.innerHTML = `
-        <p><strong>${prod.nombre}</strong></p>
-        <p>Precio: $${prod.precio} | Stock: ${prod.stock}</p>
-        <button id="inc">＋</button>
-        <button id="dec">−</button>
-        <button id="del">Eliminar</button>
-      `;
-      document.getElementById('inc').onclick = async () => {
-        prod.stock++; await saveProduct(code, prod); showProduct(code, prod);
-      };
-      document.getElementById('dec').onclick = async () => {
-        prod.stock = Math.max(0, prod.stock - 1);
-        await saveProduct(code, prod); showProduct(code, prod);
-      };
-      document.getElementById('del').onclick = async () => {
-        await deleteProduct(code);
-        ultimoCode = null;
-        resultDiv.innerHTML = '<em>Eliminado.</em>';
-      };
     }
 
-    // — Alta de nuevos productos —
-    document.getElementById('add-form').addEventListener('submit', async e => {
-      e.preventDefault();
-      if (!ultimoCode) return;
+    document.getElementById('save').onclick = async () => {
+      if (!currentCode) return;
       const data = {
         nombre: document.getElementById('name').value.trim(),
         precio: parseFloat(document.getElementById('price').value),
-        stock:  parseInt(document.getElementById('stock').value, 10)
+        stock:  parseInt(document.getElementById('stock').value,10)
       };
-      await saveProduct(ultimoCode, data);
-      showProduct(ultimoCode, data);
-      e.target.reset();
-    });
+      await saveProduct(currentCode,data);
+      showProduct(currentCode,data);
+      form.reset();
+    };
 
-    // — Arranca el scanner y gestiona detecciones —
-    html5QrCode.start(
-      { facingMode: "environment" },
-      config,
-      async decodedText => {
-        if (decodedText.length === 13 && decodedText !== ultimoCode) {
-          ultimoCode = decodedText;
-          const prod = await fetchProduct(decodedText);
-          showProduct(decodedText, prod);
-        }
-      },
-      errorMessage => {
-        // ignorar errores de no encontrar código
+    // Cámara
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
+        video.srcObject = stream;
+      } catch(e) {
+        resDiv.innerText = 'Error cámara: ' + e;
       }
-    ).catch(err => {
-      console.error("No se pudo iniciar la cámara:", err);
-      document.getElementById('result').innerText = "Error al iniciar la cámara.";
-    });
+    }
+
+    // Escaneo con BarcodeDetector
+    async function scanLoop() {
+      if (!('BarcodeDetector' in window)) {
+        resDiv.innerText = 'Este navegador no soporta BarcodeDetector.';
+        return;
+      }
+      const detector = new BarcodeDetector({ formats:['ean_13'] });
+      setInterval(async () => {
+        try {
+          const codes = await detector.detect(video);
+          if (codes.length) {
+            const code = codes[0].rawValue;
+            if (code !== lastCode && code.length===13) {
+              lastCode = code;
+              const p = await fetchProduct(code);
+              showProduct(code,p);
+            }
+          }
+        } catch(e){}
+      }, 500);
+    }
+
+    // Arranque
+    startCamera().then(scanLoop);
   </script>
 </body>
 </html>
