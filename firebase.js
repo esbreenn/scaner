@@ -1,9 +1,7 @@
 // firebase.js
-// 1) Cargamos los SDKs de compatibilidad de Firebase
-import "https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js";
-import "https://www.gstatic.com/firebasejs/9.17.1/firebase-firestore-compat.js";
+// 1) Asume que ya cargaste firebase-app-compat.js y firebase-firestore-compat.js en tu HTML.
 
-// 2) Tu configuración de Firebase (la obtuviste al registrar tu app web)
+// 2) Tu configuración:
 const firebaseConfig = {
   apiKey:             "AIzaSyBtbiJpjiVsfhUVmnF23huJLyYOw5tikB0",
   authDomain:         "scanner-prueba-f3ae0.firebaseapp.com",
@@ -13,6 +11,9 @@ const firebaseConfig = {
   appId:              "1:578819836928:web:f496190221317d372fdce5"
 };
 
-// 3) Inicializa Firebase y Firestore (modo compat)
+// 3) Inicializa Firebase + Firestore
 firebase.initializeApp(firebaseConfig);
-export const db = firebase.firestore();
+const db = firebase.firestore();
+
+// 4) Lo pegamos al `window` para usarlo desde cualquier script
+window.db = db;
