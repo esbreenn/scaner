@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>Scanner EAN-13 con ZXing & Firebase</title>
   <!-- Tu CSS -->
-  <link rel="stylesheet" href="style.css" />
-  <!-- Firebase compat SDKs -->
+  <link rel="stylesheet" href="style.css"/>
+
+  <!-- Firebase Compat SDKs -->
   <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-firestore-compat.js"></script>
   <!-- Inicialización de Firebase -->
@@ -15,58 +16,58 @@
 <body>
   <h2>Escáner de Código de Barras (EAN-13)</h2>
 
-  <!-- Contenedor de cámara: video en lugar de Quagga -->
+  <!-- Cámara en vídeo -->
   <div id="scanner-container">
-    <video id="video" playsinline></video>
+    <video id="video" playsinline muted></video>
   </div>
 
-  <!-- Aquí se muestra el código o los controles -->
+  <!-- Aquí mostramos el código o los controles de stock -->
   <div id="result"></div>
 
   <!-- Formulario para dar de alta nuevos productos -->
   <div id="form-container">
     <h3>Agregar producto</h3>
     <form id="add-product-form">
-      <input type="text"   id="product-name"  placeholder="Nombre del producto" required /><br /><br />
-      <input type="number" id="product-price" placeholder="Precio"          required /><br /><br />
-      <input type="number" id="product-stock" placeholder="Stock inicial"   required /><br /><br />
+      <input type="text"   id="product-name"  placeholder="Nombre del producto" required /><br/><br/>
+      <input type="number" id="product-price" placeholder="Precio"          required /><br/><br/>
+      <input type="number" id="product-stock" placeholder="Stock inicial"   required /><br/><br/>
       <button type="submit">Guardar producto</button>
     </form>
   </div>
 
   <!-- ZXing + Lógica principal -->
   <script type="module">
-    import { BrowserMultiFormatReader, NotFoundException } from 'https://cdn.jsdelivr.net/npm/@zxing/library@0.19.2/esm/index.js';
-    import { firebase } from './firebase.js';           // si exportas firebase
-    const db = firebase.firestore();                    // compat firestore
+    import {
+      BrowserMultiFormatReader,
+      DecodeHintType,
+      BarcodeFormat,
+      NotFoundException
+    } from 'https://cdn.jsdelivr.net/npm/@zxing/library@0.19.2/esm/index.js';
+    import { db } from './firebase.js';
 
     let ultimoCodigo = null;
 
-    // ---- Funciones CRUD con Firestore ----
+    // --- CRUD sobre Firestore ---
     async function fetchProducto(code) {
       const snap = await db.collection('productos').doc(code).get();
       return snap.exists ? snap.data() : null;
     }
-
     async function saveProducto(code, prod) {
       await db.collection('productos').doc(code).set(prod);
     }
-
     async function deleteProducto(code) {
       await db.collection('productos').doc(code).delete();
     }
 
-    // ---- Renderizado de UI ----
+    // --- Renderizado de UI ---
     function mostrarProducto(code, prod) {
       const resultDiv = document.getElementById('result');
       const formCont  = document.getElementById('form-container');
-
       if (!prod) {
         resultDiv.innerHTML = `<strong>Código no encontrado:</strong> ${code}`;
         formCont.style.display = 'block';
         return;
       }
-
       formCont.style.display = 'none';
       resultDiv.innerHTML = `
         <p><strong>Producto:</strong> ${prod.nombre}</p>
@@ -78,30 +79,44 @@
       `;
     }
 
-    // ---- Inicializar lector ZXing ----
-    const codeReader = new BrowserMultiFormatReader();
-    codeReader
-      .decodeFromVideoDevice(null, 'video', (result, error) => {
+    // --- Configuración del lector ZXing sólo para EAN-13 ---
+    const hints = new Map();
+    hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.EAN_13]);
+    const codeReader = new BrowserMultiFormatReader(hints, { timeBetweenDecodingAttempts: 300 });
+
+    // --- Arrancar cámara en alta resolución ---
+    const videoElem = document.getElementById('video');
+    navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width:  { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    })
+    .then(stream => {
+      videoElem.srcObject = stream;
+      videoElem.play();
+
+      // --- Decodificar continuamente del <video> ---
+      codeReader.decodeFromVideoElementContinuously(videoElem, (result, error) => {
         if (result) {
           const code = result.getText();
-          if (code === ultimoCodigo) return;  // evita rebotes
+          // Sólo EAN-13 de longitud exacta
+          if (code.length !== 13 || code === ultimoCodigo) return;
           ultimoCodigo = code;
           fetchProducto(code).then(prod => mostrarProducto(code, prod));
+        } else if (error && !(error instanceof NotFoundException)) {
+          console.error('ZXing error:', error);
         }
-        else if (error && !(error instanceof NotFoundException)) {
-          console.error(error);
-        }
-      })
-      .catch(err => {
-        console.error('Error al arrancar ZXing:', err);
       });
+    })
+    .catch(err => console.error('No se pudo acceder a la cámara:', err));
 
-    // ---- Control de botones (+, −, Eliminar) ----
+    // --- Eventos de botones de stock / eliminar ---
     document.getElementById('result').addEventListener('click', async e => {
       if (!ultimoCodigo) return;
-      const action = e.target.getAttribute('data-action');
+      const action = e.target.dataset.action;
       if (!action) return;
-
       let prod = await fetchProducto(ultimoCodigo);
       if (!prod) return;
 
@@ -124,7 +139,7 @@
       mostrarProducto(ultimoCodigo, prod);
     });
 
-    // ---- Alta de nuevos productos ----
+    // --- Alta de nuevos productos ---
     document.getElementById('add-product-form').addEventListener('submit', async e => {
       e.preventDefault();
       if (!ultimoCodigo) return;
