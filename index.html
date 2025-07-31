@@ -1,121 +1,140 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Escáner EAN-13 con Stock Dinámico</title>
-  <style>
-    #result button { margin: 0 5px; padding: 4px 8px; }
-  </style>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Scanner EAN-13 con Firebase</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <h2>Escáner de Código de Barras (EAN-13)</h2>
+
   <div id="scanner-container"></div>
   <div id="result"></div>
 
-  <!-- Formulario para nuevos productos -->
   <div id="form-container" style="display:none;">
     <h3>Agregar producto</h3>
     <form id="add-product-form">
-      <input type="text"    id="product-name"  placeholder="Nombre del producto" required><br>
-      <input type="number"  id="product-price" placeholder="Precio"          required><br>
-      <input type="number"  id="product-stock" placeholder="Stock inicial"   required><br>
+      <input type="text"   id="product-name"  placeholder="Nombre del producto" required><br><br>
+      <input type="number" id="product-price" placeholder="Precio"          required><br><br>
+      <input type="number" id="product-stock" placeholder="Stock inicial"   required><br><br>
       <button type="submit">Guardar producto</button>
     </form>
   </div>
 
+  <!-- 1) SDKs de compatibilidad para Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-firestore-compat.js"></script>
+
+  <!-- 2) Tu configuración e inicialización en firebase.js -->
+  <script type="module" src="./firebase.js"></script>
+
+  <!-- 3) QuaggaJS para escaneo -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
-  <script>
-    // (1) Ejemplo reducido de stock
-    const listado = {
-      "4006381333931": { nombre: "Café Nescafé", precio: 1200, stock: 5 },
-      "5011417933000": { nombre: "Aceite de Oliva", precio: 3500, stock: 3 },
-      // …otros…
-    };
+
+  <!-- 4) Lógica principal: CRUD + escaneo -->
+  <script type="module">
+    import { db } from './firebase.js';
 
     let ultimoCodigo = null;
 
-    // (2) Función para mostrar producto o formulario
-    function mostrarProducto(code) {
-      const resultDiv = document.getElementById("result");
-      const formCont  = document.getElementById("form-container");
+    // Funciones CRUD
+    async function fetchProducto(code) {
+      const doc = await db.collection('productos').doc(code).get();
+      return doc.exists ? doc.data() : null;
+    }
 
-      if (!listado[code]) {
+    async function saveProducto(code, prod) {
+      await db.collection('productos').doc(code).set(prod);
+    }
+
+    async function deleteProducto(code) {
+      await db.collection('productos').doc(code).delete();
+    }
+
+    // Renderizado de producto o formulario
+    function mostrarProducto(code, prod) {
+      const resultDiv = document.getElementById('result');
+      const formCont  = document.getElementById('form-container');
+      if (!prod) {
         resultDiv.innerHTML = `<strong>Código no encontrado:</strong> ${code}`;
-        formCont.style.display = "block";
+        formCont.style.display = 'block';
         return;
       }
-
-      formCont.style.display = "none";
-      const p = listado[code];
+      formCont.style.display = 'none';
       resultDiv.innerHTML = `
-        <p><strong>Producto:</strong> ${p.nombre}</p>
-        <p><strong>Precio:</strong> $${p.precio}</p>
-        <p><strong>Stock:</strong> ${p.stock}</p>
+        <p><strong>Producto:</strong> ${prod.nombre}</p>
+        <p><strong>Precio:</strong> $${prod.precio}</p>
+        <p><strong>Stock:</strong> ${prod.stock}</p>
         <button data-action="decrease">−</button>
         <button data-action="increase">＋</button>
         <button data-action="delete">Eliminar</button>
       `;
     }
 
-    // (3) Eventos de los botones de stock / eliminar
-    document.getElementById("result").addEventListener("click", e => {
-      if (!ultimoCodigo) return;
-      const action = e.target.getAttribute("data-action");
-      const prod   = listado[ultimoCodigo];
-      if (!action || !prod) return;
+    // Inicia Quagga
+    Quagga.init({
+      inputStream: {
+        name: 'Live',
+        type: 'LiveStream',
+        target: document.querySelector('#scanner-container'),
+        constraints: { facingMode: 'environment' }
+      },
+      decoder: { readers: ['ean_reader'] }
+    }, err => {
+      if (err) { console.error(err); return; }
+      Quagga.start();
+    });
 
-      if (action === "increase")      prod.stock++;
-      else if (action === "decrease" && prod.stock > 0) prod.stock--;
-      else if (action === "delete") {
-        delete listado[ultimoCodigo];
+    // Al detectar un código
+    Quagga.onDetected(async ({ codeResult:{ code } }) => {
+      if (code === ultimoCodigo) return;    // evita rebotes
+      ultimoCodigo = code;
+      const prod = await fetchProducto(code);
+      mostrarProducto(code, prod);
+    });
+
+    // Manejo de botones de stock / eliminar
+    document.getElementById('result').addEventListener('click', async e => {
+      if (!ultimoCodigo) return;
+      const action = e.target.getAttribute('data-action');
+      if (!action) return;
+      let prod = await fetchProducto(ultimoCodigo);
+      if (!prod) return;
+
+      if (action === 'increase') {
+        prod.stock++;
+        await saveProducto(ultimoCodigo, prod);
+      } 
+      else if (action === 'decrease' && prod.stock > 0) {
+        prod.stock--;
+        await saveProducto(ultimoCodigo, prod);
+      } 
+      else if (action === 'delete') {
+        await deleteProducto(ultimoCodigo);
         ultimoCodigo = null;
-        document.getElementById("result").innerHTML = `<em>Producto eliminado.</em>`;
+        document.getElementById('result').innerHTML = '<em>Producto eliminado.</em>';
         return;
       }
 
-      mostrarProducto(ultimoCodigo);
+      prod = await fetchProducto(ultimoCodigo);
+      mostrarProducto(ultimoCodigo, prod);
     });
 
-    // (4) Formulario para agregar nuevo producto
-    document.getElementById("add-product-form").addEventListener("submit", e => {
+    // Manejo del formulario de alta
+    document.getElementById('add-product-form').addEventListener('submit', async e => {
       e.preventDefault();
-      const name  = document.getElementById("product-name").value.trim();
-      const price = parseFloat(document.getElementById("product-price").value);
-      const stock = parseInt(document.getElementById("product-stock").value, 10);
+      if (!ultimoCodigo) return;
+      const name  = document.getElementById('product-name').value.trim();
+      const price = parseFloat(document.getElementById('product-price').value);
+      const stock = parseInt(document.getElementById('product-stock').value, 10);
+      if (!name || isNaN(price) || isNaN(stock)) return;
 
-      if (name && !isNaN(price) && !isNaN(stock) && ultimoCodigo) {
-        listado[ultimoCodigo] = { nombre: name, precio: price, stock };
-        mostrarProducto(ultimoCodigo);
-        e.target.reset();
-      }
+      const nuevo = { nombre: name, precio: price, stock };
+      await saveProducto(ultimoCodigo, nuevo);
+      mostrarProducto(ultimoCodigo, nuevo);
+      e.target.reset();
     });
-
-    // (5) Inicialización de Quagga
-    function startScanner() {
-      Quagga.init({
-        inputStream: {
-          name: "Live",
-          type: "LiveStream",
-          target: document.querySelector("#scanner-container"),
-          constraints: { facingMode: "environment" }
-        },
-        decoder: { readers: ["ean_reader"] }
-      }, err => {
-        if (err) { console.error(err); return; }
-        Quagga.start();
-      });
-
-      Quagga.onDetected(data => {
-        const code = data.codeResult.code;
-        if (code !== ultimoCodigo) {
-          ultimoCodigo = code;
-          mostrarProducto(code);
-        }
-      });
-    }
-
-    window.addEventListener("load", startScanner);
   </script>
 </body>
 </html>
