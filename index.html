@@ -75,18 +75,42 @@
     }
 
     // Inicia Quagga
-    Quagga.init({
-      inputStream: {
-        name: 'Live',
-        type: 'LiveStream',
-        target: document.querySelector('#scanner-container'),
-        constraints: { facingMode: 'environment' }
-      },
-      decoder: { readers: ['ean_reader'] }
-    }, err => {
-      if (err) { console.error(err); return; }
-      Quagga.start();
-    });
+   Quagga.init({
+  inputStream: {
+    name: "Live",
+    type: "LiveStream",
+    target: document.querySelector('#scanner-container'),
+    constraints: {
+      facingMode: 'environment',
+      // forzar un mínimo de resolución para que los trazos sean nítidos
+      width:  { min: 640, ideal: 1280 },
+      height: { min: 480, ideal: 720 }
+    }
+  },
+  // permite que Quagga “busque” el código en toda la imagen
+  locate: true,
+  locator: {
+    patchSize: 'medium',  // también puedes probar 'large'
+    halfSample: true
+  },
+  decoder: {
+    // incluye varios lectores por si el EAN viene con variaciones
+    readers: [
+      'ean_reader',
+      'ean_8_reader',
+      'upc_reader',
+      'upc_e_reader',
+      'code_128_reader'
+    ]
+  }
+}, err => {
+  if (err) {
+    console.error('Error al inicializar Quagga:', err);
+    return;
+  }
+  Quagga.start();
+});
+
 
     // Al detectar un código
     Quagga.onDetected(async ({ codeResult:{ code } }) => {
