@@ -78,36 +78,49 @@
     async function saveProduct(code, data) {
       await db.collection('productos').doc(code).set(data);
     }
+    // checkoutSale actualizada: descuenta stock y crea la venta en un batch
     async function checkoutSale(cart) {
-      const total = cart.reduce((s,i)=> s + i.precio*i.cantidad, 0);
-      const sale = { timestamp: new Date(), items: cart, total };
-      const ref = await db.collection('ventas').add(sale);
-      return ref.id;
+      const batch = db.batch();
+      // 1) restar stock para cada ítem
+      cart.forEach(item => {
+        const ref = db.collection('productos').doc(item.code);
+        batch.update(ref, {
+          stock: firebase.firestore.FieldValue.increment(-item.cantidad)
+        });
+      });
+      // 2) crear documento de venta
+      const saleRef = db.collection('ventas').doc();
+      const total = cart.reduce((sum, i) => sum + i.precio * i.cantidad, 0);
+      batch.set(saleRef, {
+        timestamp: new Date(),
+        items: cart,
+        total
+      });
+      // 3) ejecutar batch
+      await batch.commit();
+      return saleRef.id;
     }
 
     // ----- UI globals -----
-    const video    = document.getElementById('video');
-    const resDiv   = document.getElementById('result');
-    const formDiv  = document.getElementById('form');
-    const saveBtn  = document.getElementById('save');
-    const cartCont = document.getElementById('cart-container');
-    const cartTbody= document.querySelector('#cart-table tbody');
-    const cartTotalSpan = document.getElementById('cart-total');
-    const checkoutBtn   = document.getElementById('checkout-btn');
+    const video       = document.getElementById('video');
+    const resDiv      = document.getElementById('result');
+    const formDiv     = document.getElementById('form');
+    const saveBtn     = document.getElementById('save');
+    const cartTbody   = document.querySelector('#cart-table tbody');
+    const cartTotalEl = document.getElementById('cart-total');
+    const checkoutBtn = document.getElementById('checkout-btn');
 
     let lastCode = null, currentCode = null;
-    const cart = [];  // {code,nombre,precio,cantidad}
+    const cart = [];
 
     // ----- Mostrar producto / alta -----
     function showProduct(code, p) {
       resDiv.innerHTML = '';
       currentCode = code;
       if (!p) {
-        // alta
         resDiv.innerHTML = `<strong>No existe:</strong> ${code}`;
         formDiv.style.display = 'block';
       } else {
-        // botones stock + añadir al carrito
         formDiv.style.display = 'none';
         resDiv.innerHTML = `
           <p><strong>${p.nombre}</strong></p>
@@ -118,11 +131,14 @@
           <button id="add-to-cart">🛒 Agregar al carrito</button>
         `;
         document.getElementById('inc').onclick = async () => {
-          p.stock++; await saveProduct(code,p); showProduct(code,p);
+          p.stock++;
+          await saveProduct(code, p);
+          showProduct(code, p);
         };
         document.getElementById('dec').onclick = async () => {
-          p.stock = Math.max(0,p.stock-1);
-          await saveProduct(code,p); showProduct(code,p);
+          p.stock = Math.max(0, p.stock - 1);
+          await saveProduct(code, p);
+          showProduct(code, p);
         };
         document.getElementById('del').onclick = async () => {
           await db.collection('productos').doc(code).delete();
@@ -130,9 +146,9 @@
           resDiv.innerHTML = '<em>Producto eliminado.</em>';
         };
         document.getElementById('add-to-cart').onclick = () => {
-          const ex = cart.find(i=>i.code===code);
+          const ex = cart.find(i => i.code === code);
           if (ex) ex.cantidad++;
-          else cart.push({ code, nombre:p.nombre, precio:p.precio, cantidad:1 });
+          else cart.push({ code, nombre: p.nombre, precio: p.precio, cantidad: 1 });
           renderCart();
         };
       }
@@ -144,7 +160,7 @@
       const data = {
         nombre: document.getElementById('name').value.trim(),
         precio: parseFloat(document.getElementById('price').value),
-        stock:  parseInt(document.getElementById('stock').value,10)
+        stock:  parseInt(document.getElementById('stock').value, 10)
       };
       await saveProduct(currentCode, data);
       showProduct(currentCode, data);
@@ -160,19 +176,18 @@
           <td>${item.code}</td>
           <td>${item.nombre}</td>
           <td>${item.cantidad}</td>
-          <td>$${(item.precio*item.cantidad).toFixed(2)}</td>
+          <td>$${(item.precio * item.cantidad).toFixed(2)}</td>
         `;
         cartTbody.appendChild(tr);
       });
-      const tot = cart.reduce((s,i)=> s + i.precio*i.cantidad, 0);
-      cartTotalSpan.innerText = tot.toFixed(2);
+      const total = cart.reduce((s, i) => s + i.precio * i.cantidad, 0);
+      cartTotalEl.innerText = total.toFixed(2);
     }
 
-    // ----- Finalizar venta -----
+    // ----- Finalizar venta ----- 
     checkoutBtn.onclick = async () => {
       if (cart.length === 0) return alert('Carrito vacío');
       const saleId = await checkoutSale(cart);
-      // redirige al ticket
       window.location.href = `ticket.html?saleId=${saleId}`;
     };
 
@@ -192,18 +207,18 @@
           const codes = await detector.detect(video);
           if (codes.length) {
             const code = codes[0].rawValue;
-            if (code !== lastCode && code.length===13) {
+            if (code !== lastCode && code.length === 13) {
               lastCode = code;
               const p = await fetchProduct(code);
               showProduct(code, p);
             }
           }
-        } catch{}
+        } catch {}
       }, 500);
     }
 
     // ----- Init -----
-    startCamera().then(scanLoop).catch(e=> resDiv.innerText = 'Error cámara: '+e);
+    startCamera().then(scanLoop).catch(e => resDiv.innerText = 'Error cámara: ' + e);
   </script>
 </body>
 </html>
