@@ -3,25 +3,35 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Scanner EAN-13 nativo & Firebase</title>
+  <title>Mi POS - Escáner EAN-13</title>
   <style>
     body { font-family:sans-serif; text-align:center; padding:1rem; background:#f0f2f5; }
-    #video { width:100%; max-width:360px; border:2px dashed #666; border-radius:8px; }
-    #result, #form { max-width:360px; margin:1rem auto; background:#fff; padding:1rem; border-radius:8px;
-                     box-shadow:0 2px 6px rgba(0,0,0,0.1); text-align:left; }
+    video { width:100%; max-width:360px; border:2px dashed #666; border-radius:8px; }
+    #result, #form, #cart-container {
+      max-width:360px; margin:1rem auto; background:#fff;
+      padding:1rem; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.1);
+      text-align:left;
+    }
     #form { display:none; }
     input, button { width:100%; padding:0.5rem; margin:0.5rem 0; border-radius:4px; border:1px solid #ccc; }
     button { background:#007bff; color:#fff; border:none; cursor:pointer; }
     button:hover { background:#0056b3; }
+    /* Carrito */
+    #cart-table { width:100%; border-collapse:collapse; }
+    #cart-table th, #cart-table td { border:1px solid #ddd; padding:0.5rem; text-align:left; }
+    #cart-table th { background:#f7f7f7; }
   </style>
 </head>
 <body>
-  <h2>Escáner EAN-13 nativo & Firebase</h2>
+  <h2>Mi POS - Escáner EAN-13</h2>
 
+  <!-- 1) Vídeo para escáner -->
   <video id="video" autoplay playsinline></video>
 
+  <!-- 2) Resultado del escaneo / botones -->
   <div id="result"></div>
 
+  <!-- 3) Formulario alta producto -->
   <div id="form">
     <h3>Agregar producto</h3>
     <input id="name"  type="text"   placeholder="Nombre del producto" required/>
@@ -30,11 +40,24 @@
     <button id="save">Guardar</button>
   </div>
 
-  <!-- Firebase UMD -->
+  <!-- 4) Carrito -->
+  <div id="cart-container">
+    <h3>Carrito</h3>
+    <table id="cart-table">
+      <thead>
+        <tr><th>Código</th><th>Nombre</th><th>Cant.</th><th>Subtotal</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p><strong>Total: $<span id="cart-total">0.00</span></strong></p>
+    <button id="checkout-btn">Finalizar venta</button>
+  </div>
+
+  <!-- 5) Firebase UMD -->
   <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-firestore-compat.js"></script>
   <script>
-    // firebase.js inlined
+    // ===== firebase.js inlined =====
     const cfg = {
       apiKey: "AIzaSyBtbiJpjiVsfhUVmnF23huJLyYOw5tikB0",
       authDomain: "scanner-prueba-f3ae0.firebaseapp.com",
@@ -45,8 +68,9 @@
     };
     firebase.initializeApp(cfg);
     window.db = firebase.firestore();
+    // ===============================
 
-    // CRUD
+    // ----- CRUD Firestore -----
     async function fetchProduct(code) {
       const snap = await db.collection('productos').doc(code).get();
       return snap.exists ? snap.data() : null;
@@ -54,29 +78,44 @@
     async function saveProduct(code, data) {
       await db.collection('productos').doc(code).set(data);
     }
-    async function deleteProduct(code) {
-      await db.collection('productos').doc(code).delete();
+    async function checkoutSale(cart) {
+      const total = cart.reduce((s,i)=> s + i.precio*i.cantidad, 0);
+      const sale = { timestamp: new Date(), items: cart, total };
+      const ref = await db.collection('ventas').add(sale);
+      return ref.id;
     }
 
-    // UI
-    const video  = document.getElementById('video');
-    const resDiv = document.getElementById('result');
-    const form   = document.getElementById('form');
-    let lastCode = null, currentCode = null;
+    // ----- UI globals -----
+    const video    = document.getElementById('video');
+    const resDiv   = document.getElementById('result');
+    const formDiv  = document.getElementById('form');
+    const saveBtn  = document.getElementById('save');
+    const cartCont = document.getElementById('cart-container');
+    const cartTbody= document.querySelector('#cart-table tbody');
+    const cartTotalSpan = document.getElementById('cart-total');
+    const checkoutBtn   = document.getElementById('checkout-btn');
 
+    let lastCode = null, currentCode = null;
+    const cart = [];  // {code,nombre,precio,cantidad}
+
+    // ----- Mostrar producto / alta -----
     function showProduct(code, p) {
+      resDiv.innerHTML = '';
+      currentCode = code;
       if (!p) {
+        // alta
         resDiv.innerHTML = `<strong>No existe:</strong> ${code}`;
-        form.style.display = 'block';
-        currentCode = code;
+        formDiv.style.display = 'block';
       } else {
-        form.style.display = 'none';
+        // botones stock + añadir al carrito
+        formDiv.style.display = 'none';
         resDiv.innerHTML = `
           <p><strong>${p.nombre}</strong></p>
           <p>Precio: $${p.precio} | Stock: ${p.stock}</p>
-          <button id="inc">＋</button>
-          <button id="dec">−</button>
-          <button id="del">Eliminar</button>
+          <button id="inc">+ Stock</button>
+          <button id="dec">- Stock</button>
+          <button id="del">Eliminar prod</button>
+          <button id="add-to-cart">🛒 Agregar al carrito</button>
         `;
         document.getElementById('inc').onclick = async () => {
           p.stock++; await saveProduct(code,p); showProduct(code,p);
@@ -86,39 +125,65 @@
           await saveProduct(code,p); showProduct(code,p);
         };
         document.getElementById('del').onclick = async () => {
-          await deleteProduct(code);
+          await db.collection('productos').doc(code).delete();
           lastCode = null;
-          resDiv.innerHTML = '<em>Eliminado.</em>';
+          resDiv.innerHTML = '<em>Producto eliminado.</em>';
+        };
+        document.getElementById('add-to-cart').onclick = () => {
+          const ex = cart.find(i=>i.code===code);
+          if (ex) ex.cantidad++;
+          else cart.push({ code, nombre:p.nombre, precio:p.precio, cantidad:1 });
+          renderCart();
         };
       }
     }
 
-    document.getElementById('save').onclick = async () => {
+    // ----- Guardar nuevo producto -----
+    saveBtn.onclick = async () => {
       if (!currentCode) return;
       const data = {
         nombre: document.getElementById('name').value.trim(),
         precio: parseFloat(document.getElementById('price').value),
         stock:  parseInt(document.getElementById('stock').value,10)
       };
-      await saveProduct(currentCode,data);
-      showProduct(currentCode,data);
-      form.reset();
+      await saveProduct(currentCode, data);
+      showProduct(currentCode, data);
+      formDiv.reset();
     };
 
-    // Cámara
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
-        video.srcObject = stream;
-      } catch(e) {
-        resDiv.innerText = 'Error cámara: ' + e;
-      }
+    // ----- Render carrito -----
+    function renderCart() {
+      cartTbody.innerHTML = '';
+      cart.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${item.code}</td>
+          <td>${item.nombre}</td>
+          <td>${item.cantidad}</td>
+          <td>$${(item.precio*item.cantidad).toFixed(2)}</td>
+        `;
+        cartTbody.appendChild(tr);
+      });
+      const tot = cart.reduce((s,i)=> s + i.precio*i.cantidad, 0);
+      cartTotalSpan.innerText = tot.toFixed(2);
     }
 
-    // Escaneo con BarcodeDetector
+    // ----- Finalizar venta -----
+    checkoutBtn.onclick = async () => {
+      if (cart.length === 0) return alert('Carrito vacío');
+      const saleId = await checkoutSale(cart);
+      // redirige al ticket
+      window.location.href = `ticket.html?saleId=${saleId}`;
+    };
+
+    // ----- Cámara y escaneo nativo -----
+    async function startCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
+      video.srcObject = stream;
+    }
     async function scanLoop() {
       if (!('BarcodeDetector' in window)) {
-        resDiv.innerText = 'Este navegador no soporta BarcodeDetector.';
+        resDiv.innerText = 'BarcodeDetector no soportado';
         return;
       }
       const detector = new BarcodeDetector({ formats:['ean_13'] });
@@ -130,15 +195,15 @@
             if (code !== lastCode && code.length===13) {
               lastCode = code;
               const p = await fetchProduct(code);
-              showProduct(code,p);
+              showProduct(code, p);
             }
           }
-        } catch(e){}
+        } catch{}
       }, 500);
     }
 
-    // Arranque
-    startCamera().then(scanLoop);
+    // ----- Init -----
+    startCamera().then(scanLoop).catch(e=> resDiv.innerText = 'Error cámara: '+e);
   </script>
 </body>
 </html>
