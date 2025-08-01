@@ -2,23 +2,24 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Ticket de Venta - Mi Tienda S.A.</title>
-  <link rel="stylesheet" href="ticket.css" />
+  <link rel="stylesheet" href="ticket.css">
 </head>
 <body>
   <div id="ticket">
     <header>
+      <!-- Logo de la tienda (coloca logo.png en la misma carpeta) -->
       <img src="logo.png" alt="Mi Tienda S.A." id="logo" />
       <h1>Mi Tienda S.A.</h1>
       <p>Calle Falsa 123, Ciudad</p>
       <p>Tel: (011) 1234-5678 | CUIT: 20-12345678-9</p>
       <hr />
       <div class="meta">
-        <p><strong>Ticket Nº:</strong> <span id="sale-id"></span></p>
-        <p><strong>Fecha:</strong> <span id="sale-date"></span></p>
-        <p><strong>Cajero:</strong> <span id="cashier">--</span></p>
+        <p><span>Ticket Nº:</span> <span id="sale-id">Cargando...</span></p>
+        <p><span>Fecha:</span> <span id="sale-date">Cargando...</span></p>
+        <p><span>Cajero:</span> <span id="cashier">--</span></p>
       </div>
       <hr />
     </header>
@@ -29,74 +30,92 @@
           <tr>
             <th>Cant.</th>
             <th>Descripción</th>
-            <th>Precio U.</th>
+            <th>Precio U.</th>
             <th>Total</th>
           </tr>
         </thead>
         <tbody id="items-body">
+          <!-- Líneas generadas por JS -->
         </tbody>
       </table>
     </section>
 
     <footer>
       <div class="totals">
-        <p><span>Subtotal:</span><span id="subtotal"></span></p>
-        <p><span>IVA (21%):</span><span id="tax"></span></p>
-        <p class="grand"><span>Total:</span><span id="grand-total"></span></p>
+        <p><span>Subtotal:</span> <span id="subtotal">$0.00</span></p>
+        <p><span>IVA (21%):</span> <span id="tax">$0.00</span></p>
+        <p class="grand"><span>Total:</span> <span id="grand-total">$0.00</span></p>
       </div>
       <p class="thanks">¡Gracias por su compra!</p>
     </footer>
   </div>
 
-  <button id="back-btn">← Volver al POS</button>
-  <button id="print-btn">🖨 Imprimir</button>
+  <div id="actions">
+    <button id="back-btn">← Volver al POS</button>
+    <button id="print-btn">🖨 Imprimir</button>
+  </div>
 
+  <!-- Carga Firebase UMD y config -->
   <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-firestore-compat.js"></script>
   <script src="./firebase.js"></script>
+
   <script>
-    // Carga saleId de la URL
+    // Obtener el saleId de la URL
     const params = new URLSearchParams(location.search);
     const saleId = params.get('saleId');
-    document.getElementById('sale-id').innerText = saleId;
+    document.getElementById('sale-id').innerText = saleId || '---';
 
-    // Referencias DOM
-    const db = window.db;
-    const body    = document.getElementById('items-body');
+    // Referencias al DOM
+    const ticketDiv = document.getElementById('ticket');
+    const itemsBody = document.getElementById('items-body');
+    const dateEl    = document.getElementById('sale-date');
+    const cashierEl = document.getElementById('cashier');
     const subtotalEl  = document.getElementById('subtotal');
     const taxEl       = document.getElementById('tax');
     const totalEl     = document.getElementById('grand-total');
-    const dateEl      = document.getElementById('sale-date');
+    
+    // Puedes guardar el nombre del cajero en localStorage o variable global
+    const cajero = localStorage.getItem('cashierName') || 'Admin';
+    cashierEl.innerText = cajero;
 
-    // Render ticket
-    db.collection('ventas').doc(saleId).get().then(doc => {
-      const data = doc.data();
-      const d = data.timestamp.toDate();
-      dateEl.innerText = d.toLocaleString();
+    // Cargar datos de Firestore
+    window.db.collection('ventas').doc(saleId).get()
+      .then(doc => {
+        if (!doc.exists) throw new Error('Venta no encontrada');
+        const data = doc.data();
+        const d = data.timestamp.toDate();
+        dateEl.innerText = d.toLocaleString();
 
-      let subtotal = 0;
-      data.items.forEach(item => {
-        const row = document.createElement('tr');
-        const lineTotal = item.precio * item.cantidad;
-        subtotal += lineTotal;
-        row.innerHTML = `
-          <td>${item.cantidad}</td>
-          <td>${item.nombre}</td>
-          <td>$${item.precio.toFixed(2)}</td>
-          <td>$${lineTotal.toFixed(2)}</td>
-        `;
-        body.appendChild(row);
+        let subtotal = 0;
+        data.items.forEach(item => {
+          const lineTotal = item.precio * item.cantidad;
+          subtotal += lineTotal;
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${item.cantidad}</td>
+            <td>${item.nombre}</td>
+            <td>$${item.precio.toFixed(2)}</td>
+            <td>$${lineTotal.toFixed(2)}</td>
+          `;
+          itemsBody.appendChild(row);
+        });
+
+        const iva   = subtotal * 0.21;
+        const grand = subtotal + iva;
+        subtotalEl.innerText = `$${subtotal.toFixed(2)}`;
+        taxEl.innerText      = `$${iva.toFixed(2)}`;
+        totalEl.innerText    = `$${grand.toFixed(2)}`;
+      })
+      .catch(err => {
+        ticketDiv.innerHTML = `<p style="color:red;">Error: ${err.message}</p>`;
       });
 
-      const iva = subtotal * 0.21;
-      const grand = subtotal + iva;
-
-      subtotalEl.innerText = `$${subtotal.toFixed(2)}`;
-      taxEl.innerText      = `$${iva.toFixed(2)}`;
-      totalEl.innerText    = `$${grand.toFixed(2)}`;
-    });
-
-    document.getElementById('back-btn').onclick = () => window.location.href = 'index.html';
+    // Volver al POS (usa history.back para no perder contexto)
+    document.getElementById('back-btn').onclick = () => {
+      history.back();
+    };
+    // Imprimir
     document.getElementById('print-btn').onclick = () => window.print();
   </script>
 </body>
